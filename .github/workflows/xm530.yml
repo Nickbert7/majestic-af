@@ -1,0 +1,62 @@
+name: Build XM530 plugin
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-xm530:
+    name: Cross-compile majestic-af for XM530
+    runs-on: ubuntu-latest
+    env:
+      TOOLCHAIN_URL: https://github.com/OpenIPC/firmware/releases/download/toolchain/toolchain.xiongmai-xm530.tgz
+      TOOLCHAIN_SHA256: c88003c5beb4eb9090a1cc03a02439888c25578bfa58924b21ef28a2762b94eb
+      CROSS_COMPILE: arm-openipc-linux-musleabi-
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install OpenIPC XM530 toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/toolchain.tgz"
+          curl --fail --location --silent --show-error "$TOOLCHAIN_URL" --output "$archive"
+          echo "$TOOLCHAIN_SHA256  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/toolchain"
+          tar xzf "$archive" -C "$RUNNER_TEMP/toolchain"
+          echo "$RUNNER_TEMP/toolchain/arm-openipc-linux-musleabi_sdk-buildroot/bin" >> "$GITHUB_PATH"
+
+      - name: Configure XM530 cross-build
+        run: |
+          ${CROSS_COMPILE}gcc --version | head -n 1
+          cmake -S . -B build-xm530 \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=arm \
+            -DCMAKE_C_COMPILER="${CROSS_COMPILE}gcc" \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build plugin
+        run: cmake --build build-xm530 --parallel
+
+      - name: Verify XM530 artifact
+        run: |
+          test -f build-xm530/majestic-af.so
+          ${CROSS_COMPILE}readelf -h build-xm530/majestic-af.so | grep -q 'Type:.*DYN'
+          ${CROSS_COMPILE}readelf -h build-xm530/majestic-af.so | grep -q 'Machine:.*ARM'
+          file build-xm530/majestic-af.so
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: majestic-af-xm530
+          path: build-xm530/majestic-af.so
+          if-no-files-found: error
+          retention-days: 14
