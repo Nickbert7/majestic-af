@@ -361,6 +361,26 @@ static bool ctrl_write(uint8_t rgn, uint16_t ctrl) {
     return true;
 }
 
+// The focus motor drives FAR at half the rate it drives NEAR, as bursts of at most
+// MS_FOCUS_FAR_BURST microsteps, each a whole cadence. At the full MS_STEP_BURST it lost steps
+// FAR -- silently, so the count ran ahead of the lens. Measured on the HI3516D_N81820 dome
+// (the OpenIPC/firmware#2385 model, x2.6): each 1520-microstep FAR drive left the count ~489
+// ahead of the lens (the crest read at 380, then 870, 1358, 1847 after three round trips,
+// every one), while at 20 the crest stayed at 384-385 through six 760-microstep round trips,
+// and 10 held as well. NEAR lost nothing at full rate. The loss grows with the focus group's
+// travel (homing's short FAR return to ~450 came back true), which is why a dome focused far
+// out at wide restored its saved focus several microsteps off after a reboot: the passes that
+// found it had driven FAR through the lossy range, and the count they saved was ahead.
+#ifndef MS_FOCUS_FAR_BURST
+#define MS_FOCUS_FAR_BURST 20
+#endif
+// The largest burst a move of this axis this way may take. Applied where a burst is sized, so
+// each one is its own pass of the stepping loop -- counted when it lands, and with a stop or a
+// reversal seen before the next.
+static int burst_cap(bool is_focus, int dir) {
+    return is_focus && dir > 0 ? MS_FOCUS_FAR_BURST : MS_STEP_BURST;
+}
+
 static bool move_axis(uint8_t rgn, int isr_bit, bool dir, int step) {
     if (step < 1) step = 1;
     if (step > 63) step = 63;
@@ -514,7 +534,7 @@ static void *step_thread(void *arg) {
                 } else {                                 // STEP: n microsteps, clamped when homed
                     req = want - moved;
                     if (req <= 0) break;
-                    if (req > MS_STEP_BURST) req = MS_STEP_BURST;
+                    if (req > burst_cap(true, dir)) req = burst_cap(true, dir);
                     burst = (!s_focus_homed && dir < 0) ? req
                               : ms_clamp_step(s_focus_pos, dir, req, max);
                     if (burst == 0) break;               // at the soft stop this way
@@ -563,7 +583,7 @@ static void *step_thread(void *arg) {
         // safe) and bound the toward-MAX direction only by the load origin. Homed,
         // the clamp applies both ways from a known 0.
         int step = (!*homed && dir < 0) ? MS_STEP_BURST
-                                        : ms_clamp_step(*pos, dir, MS_STEP_BURST, max);
+                                        : ms_clamp_step(*pos, dir, burst_cap(!is_zoom, dir), max);
         if ((is_zoom && s_home_phase == 3) || (!is_zoom && (s_home_phase == 4 || s_home_phase == 5))) {
             // Back to where the last run left it, whichever way that now is (a seed
             // that arrives during this leg moves the target). Phase 4 stops short of
