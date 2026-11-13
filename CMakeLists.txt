@@ -31,7 +31,9 @@ add_library(majestic-af SHARED
     src/act_ms41908.c
     src/ms41908_calc.c
     src/act_gpiostep.c
-    src/gpiostep_calc.c)
+    src/gpiostep_calc.c
+    src/act_visca.c
+    src/visca_calc.c)
 
 target_include_directories(majestic-af PRIVATE include)
 
@@ -89,6 +91,13 @@ if(NOT CMAKE_CROSSCOMPILING)
     target_include_directories(gpiostep_test PRIVATE include tests)
     add_test(NAME gpiostep COMMAND gpiostep_test)
 
+    # The VISCA backend's pure logic: the bytes per verb (as the stock N51813L
+    # firmware sends them), the reply parser, and the measured magnification curve.
+    add_executable(visca_test
+        tests/visca_main.c tests/visca_test.c src/visca_calc.c)
+    target_include_directories(visca_test PRIVATE include tests)
+    add_test(NAME visca COMMAND visca_test)
+
     # The settings description the core declares (cmd "schema"). Pure, so it
     # runs with a list of its own, and with the real one from actuator.c
     # against the core's size limit (the backends stubbed by the test).
@@ -110,7 +119,8 @@ if(NOT CMAKE_CROSSCOMPILING)
     # one the tty was set to, and a port with no line to set is not opened.
     add_executable(act_uart_test tests/act_uart_test.c src/act_uart.c src/actuator.c src/proto.c)
     target_include_directories(act_uart_test PRIVATE include tests)
-    target_compile_definitions(act_uart_test PRIVATE FILE_BASENAME="act_uart")
+    target_compile_definitions(act_uart_test PRIVATE FILE_BASENAME="act_uart"
+                               PTZ_GPIO_ROOT="act_uart_gpio")
     target_link_libraries(act_uart_test PRIVATE pthread)
     add_test(NAME act_uart COMMAND act_uart_test)
 

@@ -137,10 +137,17 @@ static Actuator head = {
     .has_presets = head_has_presets,
 };
 
+bool actuator_head_own_port(const char *head_port, const char *port) {
+    (void)head_port;
+    (void)port;
+    return true;
+}
+
 const Actuator *actuator_select_head(const char *name, const Actuator *lens,
-                                     const char **why) {
+                                     bool own_port, const char **why) {
     (void)name;
     (void)lens;
+    (void)own_port;
     if (why) {
         *why = NULL;
     }
@@ -154,7 +161,8 @@ void af_reader_ensure(void) {}
 void af_preempt(void) {}
 void af_note_manual_focus(void) {}
 unsigned af_focus_gen(void) { return 0; }
-void af_book_after_zoom(long at_ms, unsigned gen) { (void)at_ms; (void)gen; }
+static volatile int bookings = 0;   /* after-zoom passes booked */
+void af_book_after_zoom(long at_ms, unsigned gen) { (void)at_ms; (void)gen; bookings++; }
 static volatile int book_ticks = 0;   /* watchdog ticks that offered a booked pass a start */
 bool af_book_tick(long now) { (void)now; book_ticks++; return false; }
 bool af_alive(void) { return false; }
@@ -283,6 +291,26 @@ TEST a_lens_settling_after_a_zoom_is_focus_moving(void) {
     ASSERT_EQ(0, rep[3].moving);
     ASSERT_EQ(PTZ_AXIS_FOCUS, rep[3].axis);
     fake.zoom_settle_ms = 0;
+    stop();
+    PASS();
+}
+
+// A lens that focuses itself after a zoom (own_focus, a VISCA camera block) gets
+// no after-zoom pass booked: two autofocus loops would fight over the lens.
+TEST a_lens_with_its_own_focus_books_no_pass(void) {
+    start(false);
+    bookings = 0;
+    ASSERT(motion_move(PTZ_TELE, 100));
+    sleep_ms(400);   // the deadline stops the zoom, the watchdog books
+    ASSERT(bookings > 0);
+    stop();
+    start(false);
+    fake.own_focus = true;
+    bookings = 0;
+    ASSERT(motion_move(PTZ_TELE, 100));
+    sleep_ms(400);
+    ASSERT_EQ(0, bookings);
+    fake.own_focus = false;
     stop();
     PASS();
 }
@@ -868,6 +896,48 @@ TEST no_head_no_head_token(void) {
     PASS();
 }
 
+// A serial lens (VISCA) and a head on its own port (ptz.headPort): port= is
+// the lens's, and the head's port closes the line after its other tokens.
+TEST a_head_on_its_own_port_is_reported_after_the_lens_line(void) {
+    char caps[PTZ_CAPS_MAX];
+    fake.line = fake_line;
+    start_with_head(false);
+    motion_describe(caps, sizeof caps);
+    ASSERT(strstr(caps, " port=/dev/ttyOPENED speed=9600 addr=7 "));
+    const char *h = strstr(caps, " head=pelco-d headstate=ready headport=/dev/ttyAMA1 headaddr=1");
+    ASSERT(h != NULL);
+    ASSERT_EQ(caps + strlen(caps), h + strlen(h));   // last
+    stop_with_head();
+    fake.line = NULL;
+    PASS();
+}
+
+// A head on its own port that has not opened still says where it will be
+// dialled, as port= does for a closed lens.
+TEST a_closed_head_on_its_own_port_says_where(void) {
+    char caps[PTZ_CAPS_MAX];
+    fake.line = fake_line;
+    use_head = true;
+    head_opens = false;
+    start(false);
+    motion_describe(caps, sizeof caps);
+    ASSERT(strstr(caps, " headstate=closed headport=fake headaddr=1"));
+    stop_with_head();
+    fake.line = NULL;
+    PASS();
+}
+
+// The head alone on a tty is the line's port=; it is not said twice.
+TEST a_head_on_the_port_is_not_said_twice(void) {
+    char caps[PTZ_CAPS_MAX];
+    start_with_head(false);
+    motion_describe(caps, sizeof caps);
+    ASSERT(strstr(caps, " port=/dev/ttyAMA1 "));
+    ASSERT_EQ(NULL, strstr(caps, "headport="));
+    stop_with_head();
+    PASS();
+}
+
 SUITE(motion_report_suite) {
     RUN_TEST(a_move_is_reported_once_and_its_deadline_ends_it);
     RUN_TEST(a_stop_ends_it_and_a_new_axis_is_one_move);
@@ -876,6 +946,7 @@ SUITE(motion_report_suite) {
     RUN_TEST(a_drive_cut_short_by_closing_is_ended);
     RUN_TEST(a_takeover_mid_pass_leaves_no_focus_report_behind);
     RUN_TEST(a_lens_settling_after_a_zoom_is_focus_moving);
+    RUN_TEST(a_lens_with_its_own_focus_books_no_pass);
     RUN_TEST(a_diagonal_is_a_move_on_both_axes);
     RUN_TEST(a_backend_that_reports_itself_is_left_to_it);
     RUN_TEST(a_speed_reaches_only_a_motor_that_keeps_it);
@@ -888,6 +959,9 @@ SUITE(motion_report_suite) {
     RUN_TEST(the_frame_is_offered_only_where_it_is_known);
     RUN_TEST(a_step_deadline_follows_the_actuators_step_time);
     RUN_TEST(no_head_no_head_token);
+    RUN_TEST(a_head_on_its_own_port_is_reported_after_the_lens_line);
+    RUN_TEST(a_head_on_the_port_is_not_said_twice);
+    RUN_TEST(a_closed_head_on_its_own_port_says_where);
     RUN_TEST(pan_goes_to_the_head_and_zoom_to_the_lens);
     RUN_TEST(the_other_motor_is_stopped_before_this_one_starts);
     RUN_TEST(a_stop_reaches_both_and_the_head_closes_first);

@@ -85,7 +85,20 @@ bool schema_write(char *buf, size_t cap,
         put_choices(&o, head);
         put(&o, ",\"help\":\"A pan/tilt base on its own wire, beside the lens "
                 "named above: pan and tilt go to it, zoom and focus to the lens. "
-                "It uses the serial port, speed and address set here.\"}");
+                "It uses the serial port, speed and address set here, or the "
+                "head port below.\"}");
+        // Where the head is when it is not on ptz.port (act_uart.c, uart_open).
+        put(&o, ",\"headPort\":{\"type\":\"string\",\"default\":\"\","
+                "\"title\":\"Head port\",\"help\":\"The head's own port, when "
+                "the lens has the serial port above: another tty such as /dev/ttyAMA1, "
+                "or tcp://host:port for a base wired to a serial gateway on the network. "
+                "The host is an IP address, not a name. Empty: the head uses the "
+                "serial port above.\"}");
+        put(&o, ",\"headBaud\":{\"type\":\"integer\",\"default\":0,"
+                "\"minimum\":0,\"maximum\":115200,\"title\":\"Head speed\","
+                "\"help\":\"The line speed of a head port that is a tty, when it "
+                "differs from the lens's. 0: the speed above. Over tcp:// the "
+                "gateway sets the speed.\"}");
     }
     // The two directions a pan/tilt motor may turn the wrong way from the
     // picture (motion.c, mo_pan_invert): off on every camera but one that says so.
@@ -98,6 +111,11 @@ bool schema_write(char *buf, size_t cap,
         put(&o, ",\"tiltInvert\":{\"type\":\"boolean\",\"default\":false,"
                 "\"title\":\"Tilt inverted\",\"help\":\"Turn the head the other way "
                 "for up and down.\"}");
+        // The transceiver's direction on a half-duplex head (act_uart.c, dir_open).
+        put(&o, ",\"rs485Pin\":{\"type\":\"integer\",\"default\":-1,"
+                "\"minimum\":-1,\"maximum\":511,\"title\":\"RS-485 direction pin\","
+                "\"help\":\"The GPIO that turns an RS-485 transceiver round: high "
+                "while a frame goes out, low otherwise. -1 for a plain serial line.\"}");
         // The head's stored positions (motion.c, motion_preset): how many are offered,
         // and how long a go-to holds the wire while the head travels.
         put(&o, ",\"presetMax\":{\"type\":\"integer\",\"default\":32,"

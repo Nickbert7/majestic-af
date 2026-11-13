@@ -8,6 +8,7 @@
 extern const Actuator act_uart;      // src/act_uart.c — Pelco / XiongMai over a tty
 extern Actuator act_ms41908;         // src/act_ms41908.c — MS41908M SPI stepper (its focus travel is set at open)
 extern const Actuator act_gpiostep;  // src/act_gpiostep.c — GPIO pan/tilt steppers
+extern const Actuator act_visca;     // src/act_visca.c — Sony VISCA lens MCU over a tty
 
 // Every value the key may take, the backend that serves it, and its word on
 // the settings page. Adding a driver is a row here: the core asks for this
@@ -21,6 +22,7 @@ static const struct {
     {{"pelco-d", "Pelco-D (UART)"}, &act_uart},
     {{"ms41908", "MS41908 lens stepper (SPI)"}, &act_ms41908},
     {{"gpiostep", "GPIO pan/tilt steppers"}, &act_gpiostep},
+    {{"visca", "Sony VISCA lens MCU (UART)"}, &act_visca},
 };
 
 const ActuatorChoice *actuator_choice(unsigned i) {
@@ -62,8 +64,15 @@ const ActuatorChoice *actuator_head_choice(unsigned i) {
     return i < sizeof heads / sizeof *heads ? &heads[i].choice : NULL;
 }
 
+bool actuator_head_own_port(const char *head_port, const char *port) {
+    if (!head_port || !*head_port) {
+        return false;
+    }
+    return strcmp(head_port, port && *port ? port : "/dev/ttyAMA0") != 0;
+}
+
 const Actuator *actuator_select_head(const char *name, const Actuator *lens,
-                                     const char **why) {
+                                     bool own_port, const char **why) {
     if (why) {
         *why = NULL;
     }
@@ -79,6 +88,13 @@ const Actuator *actuator_select_head(const char *name, const Actuator *lens,
     if (head == lens) {
         if (why) {
             *why = "it is the lens's own transport";
+        }
+        return NULL;
+    }
+    if (lens && lens->line && !own_port) {
+        // Both would open ptz.port and speak two protocols down one wire.
+        if (why) {
+            *why = "the lens is on ptz.port itself";
         }
         return NULL;
     }

@@ -4,9 +4,10 @@
 // press/release deadlines, manual-preempts-search, the after-zoom focus booking,
 // the teardown order — and an Actuator owns the part that is not: how a verb
 // becomes motion, over what wire, and where (if anywhere) magnification comes
-// from. Three exist: `act_uart` (the Pelco/XiongMai byte-frame path over a tty,
-// proto.c), `act_ms41908` (the MS41908M SPI stepper on these Xiongmai boards) and
-// `act_gpiostep` (a pan/tilt head of two GPIO steppers, through gpiostep.ko).
+// from. Four exist: `act_uart` (the Pelco/XiongMai byte-frame path over a tty,
+// proto.c), `act_visca` (a Sony VISCA lens MCU over a tty), `act_ms41908` (the
+// MS41908M SPI stepper on these Xiongmai boards) and `act_gpiostep` (a pan/tilt
+// head of two GPIO steppers, through gpiostep.ko).
 //
 // Locking contract — the reason a stepper fits behind the same policy as a Pelco
 // wire. emit() is called by motion.c with its policy mutex (mo_mu) held and MUST
@@ -110,7 +111,10 @@ typedef struct Actuator {
     // the engine restored from the last run of this boot. A backend that homes its
     // focus at open takes the lens back there afterwards, so a restart does not
     // leave the picture on the near stop. NULL, or false, where it means nothing.
-    bool (*seed_focus)(long pos);
+    // `dir` is the way the lens was moving when it got there (+1 FAR, -1 NEAR, 0 not known):
+    // the backend arrives the same way, so the gear slack sits where it sat and the lens is
+    // where it was, not a slack off.
+    bool (*seed_focus)(long pos, int dir);
     // Optional: true when open() takes focus to a physical reference (a homing
     // seek) every time, so a focus position saved in an EARLIER BOOT is still
     // measured from the same origin. The engine then restores it across a reboot;
@@ -132,6 +136,11 @@ typedef struct Actuator {
     // after zoom_settle_ms and then watches the picture until this long after the stop,
     // refocusing once if that move comes. 0 = never.
     long zoom_late_ms;
+    // True when the lens focuses ITSELF after a zoom (a VISCA camera block's MCU
+    // runs its own autofocus): the engine then books no after-zoom pass of its
+    // own whatever ptz.focusMode says, so the two never fight over the lens. An
+    // explicit /autofocus request still runs one.
+    bool own_focus;
     // End every zoom-out with a short zoom-in: carry the zoom-out on this long past the stop,
     // then zoom in for as long. A lens MCU that sets focus from its own zoom count leaves it
     // well off after a zoom-out, the zoom gear's slack putting the lens short of that count;
@@ -187,11 +196,19 @@ bool actuator_names_other(const char *name);
 //
 // NULL -- no head, and the camera is driven exactly as before -- for "none",
 // empty, unknown, the lens's own backend (one transport cannot be both: the UART
-// backend has one tty), or a lens that already pans (it would have two owners).
-// For the last two, `why` (if given) says which, for the caller to log; it is
-// NULL when no head was asked for. Pure, so the schema test can link it.
+// backend has one tty), a lens on ptz.port itself (VISCA) unless the head has a
+// port of its own (`own_port`: ptz.headPort is set), or a lens that already pans
+// (it would have two owners). For the refusals, `why` (if given) says which, for
+// the caller to log; it is NULL when no head was asked for. Pure, so the schema
+// test can link it.
 const Actuator *actuator_select_head(const char *name, const Actuator *lens,
-                                     const char **why);
+                                     bool own_port, const char **why);
+
+// Whether ptz.headPort gives the head a port of its own: set, and not the
+// lens's ptz.port (empty: /dev/ttyAMA0) under another name for the same thing.
+// The same tty twice would be two backends speaking two protocols down one
+// wire. Pure, for actuator_select_head's `own_port`.
+bool actuator_head_own_port(const char *head_port, const char *port);
 
 // The i-th value ptz.head may take, or NULL past the last; the first is "none".
 const ActuatorChoice *actuator_head_choice(unsigned i);
