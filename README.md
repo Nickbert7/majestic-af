@@ -62,7 +62,7 @@ chosen at runtime by `ptz.actuator`, behind a small backend vtable
   starts. Zoom and focus only; focus is the MCU's own, so the plugin books no
   after-zoom pass for it (`/autofocus` still runs one). Magnification comes from
   polling CAM_ZoomPosInq, mapped through a curve measured on that block. It uses
-  `ptz.port`, so it takes no `ptz.head`.
+  `ptz.port`, so a head beside it needs a port of its own (`ptz.headPort`, below).
 - `gpiostep` — pan/tilt heads whose two steppers hang straight off SoC GPIOs with
   no motor MCU (Goke GK7205V510 PTZ cameras), through OpenIPC/firmware's
   `gpiostep.ko`. Pan and tilt only; the head's travel and directions come from
@@ -93,6 +93,37 @@ line is one line for both, with ` head=<protocol> headstate=ready|closed` at the
 end. `head` is `none` by default, and a camera that leaves it so is driven
 exactly as before. Today the head can be `pelco-d`; a head on the lens's own
 transport, or beside a lens that already pans, is refused.
+
+Where the lens holds `ptz.port` itself (`visca`), the head goes on its own port,
+`ptz.headPort`: another tty, or `tcp://host:port` for a base whose RS-485 pair
+hangs off a serial gateway on the network (an SBC or a serial server that copies
+the bytes onto the pair at the base's rate):
+
+```yaml
+ptz:
+  enabled: true
+  actuator: visca       # the lens, on /dev/ttyAMA0
+  port: /dev/ttyAMA0
+  baud: 9600
+  head: pelco-d
+  headPort: tcp://192.168.1.20:4001
+  address: 1            # the head's Pelco address
+```
+
+A tty `headPort` runs at `ptz.headBaud`, or at `ptz.baud` when that is 0 (the
+default); a `headPort` that names `ptz.port` again is no port of its own. Over
+TCP the host is an IP address, not a name (a lookup cannot be bounded, and the
+dial runs where a stop waits for it), and the line speed and the RS-485
+turnaround are the gateway's, so `headBaud` and `rs485Pin` are not used. A
+gateway that closes or resets the connection is dialled again for the next
+frame. One that vanishes silently (power, cable) is noticed by TCP keepalive
+and a 2 s user timeout. A frame queued just before that may still be lost: TCP
+says the bytes left the camera, not that the base got them. A gateway that
+cannot be reached is tried again at most every 2 s, with 300 ms for the whole
+dial. On the capability line the head's port follows its other tokens as
+` headport=<port> headaddr=<n>`, also while it is closed. `headPort` is ignored
+when the UART backend is the lens. A gateway can be as simple as `socat
+TCP-LISTEN:4001,reuseaddr,fork FILE:/dev/ttyUSB0,raw,echo=0,b2400` on the SBC.
 
 A head on an RS-485 bus needs its transceiver turned round for every frame.
 `ptz.rs485Pin` names the GPIO that does it: high while a frame goes out, then
