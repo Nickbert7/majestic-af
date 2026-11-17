@@ -149,16 +149,67 @@ varifocal HI3516D_N81820. Another lens on the same chip sets its own:
 `ptz.lensZoomMax` (the ratio at the tele end), `ptz.lensZoomReversed` (the zoom
 motor's home stop is the wide end), and `ptz.lensSwap` (zoom and focus on each
 other's motor). `ptz.lensHome` drives both axes into their end stops when the
-lens opens and then zooms back to where the last run left it, for a lens whose
+lens opens -- a seek that stops a margin past the position the last run saved,
+and covers the whole travel only when there is none -- and then zooms back to
+where the last run left it, for a lens whose
 photo-interrupters read nothing useful; focus goes back too, to the position the
 last run saved, even across a reboot (a homed origin makes it boot-independent). The chip
 steps only on the sensor's frame timing, so the backend moves nothing, homing included,
-until the sensor streams (`ms41908: waiting for the sensor to stream ...`); the backend logs each axis's position
+until the sensor streams (`ms41908: waiting for the sensor to stream ...`). An axis that
+has not found its home stop yet moves toward it only: away from it nothing bounds the
+travel, so FAR or the away zoom is refused until a seek has found the origin. The backend logs each axis's position
 at the end of every move (`ms41908: zoom at N of M ...`), which is how a lens's
 travel is measured on the camera.
 
 Focus-value support on other SoCs (Ingenic T31 has the metric) widens where the
 plugin is useful.
+
+## Listening for clicks
+
+A stepper that clicks is skipping or stalling, so a motor test on a camera runs
+under `tools/clickguard.py`. It listens through another camera's microphone (any
+majestic camera with audio enabled, `/audio.pcm`) placed next to the one under
+test, and stops the test on the first click.
+
+```sh
+export CLICKGUARD_PASSWORD=...                # the cameras' web password
+tools/clickguard.py selftest --mic MIC        # MIC's speaker ticks; every tick must be heard
+tools/clickguard.py run --mic MIC --dut DUT -- ssh root@DUT sh /tmp/test.sh
+tools/clickguard.py listen --mic MIC          # print what it hears, until ^C
+tools/clickguard.py analyze rec.pcm --rate 48000   # a recording saved with --save
+```
+
+It needs Python 3 with numpy and scipy.
+
+**Before** a test, `run` runs `selftest` with the run's own rate, bar and
+calibration, and starts nothing unless it passes (exit 3). Its reference is a tick
+train on the microphone camera's speaker -- which proves the microphone, not where
+it stands -- or `--ref-cmd`, a command that makes exactly `--ref-clicks` clicks at
+the device under test, which proves both. More clicks than that fail too, as does a
+reference still running at `--ref-timeout`. It then listens to the quiet room and
+sets its bar over what the room does by itself: high-passed at 2 kHz, the 1 ms
+envelope; never under 150.
+
+**During** it, a click is an impulsive rise over that bar, over within 40 ms; a
+motor's steady whir is not one. The first click, or the microphone stream ending,
+aborts:
+- the test is killed;
+- the device under test gets a PTZ stop;
+- its init script's `supervise` loop is killed, which would otherwise start
+  majestic again and home the lens;
+- majestic is killed, so the chip gets no more VD pulses;
+- its hardware watchdog is disarmed (`V`), which would otherwise reset the board.
+Then majestic stays down until it is started again. `run` exits 2 when it aborted.
+
+**Setting it up:**
+- Put the microphone camera within arm's reach of the lens, not across the room.
+- Audio on, input volume around 40.
+- Run `selftest`; its last line says how far over the bar the ticks arrived.
+
+On an HI3516D_N81820 dome measured so, the end stops arrived at 240-1300 (bar 150),
+and the lens in motion, after the drive fix, stayed under the room's own background.
+A camera with no speaker of its own -- that dome has none -- is covered by the
+microphone camera's speaker next to it, or by a `--ref-cmd` that clicks there.
 
 ## Contributing
 
