@@ -149,16 +149,38 @@ varifocal HI3516D_N81820. Another lens on the same chip sets its own:
 `ptz.lensZoomMax` (the ratio at the tele end), `ptz.lensZoomReversed` (the zoom
 motor's home stop is the wide end), and `ptz.lensSwap` (zoom and focus on each
 other's motor). `ptz.lensHome` drives both axes into their end stops when the
-lens opens and then zooms back to where the last run left it, for a lens whose
+lens opens -- a seek that stops a margin past the position the last run saved,
+and covers the whole travel only when there is none -- and then zooms back to
+where the last run left it, for a lens whose
 photo-interrupters read nothing useful; focus goes back too, to the position the
 last run saved, even across a reboot (a homed origin makes it boot-independent). The chip
 steps only on the sensor's frame timing, so the backend moves nothing, homing included,
-until the sensor streams (`ms41908: waiting for the sensor to stream ...`); the backend logs each axis's position
+until the sensor streams (`ms41908: waiting for the sensor to stream ...`). An axis that
+has not found its home stop yet moves toward it only: away from it nothing bounds the
+travel, so FAR or the away zoom is refused until a seek has found the origin. The backend logs each axis's position
 at the end of every move (`ms41908: zoom at N of M ...`), which is how a lens's
 travel is measured on the camera.
 
 Focus-value support on other SoCs (Ingenic T31 has the metric) widens where the
 plugin is useful.
+
+## Listening for clicks
+
+A stepper that clicks is skipping or stalling, so a motor test on a camera runs
+under `tools/clickguard.py`. It listens through another camera's microphone (any
+majestic camera with audio enabled, `/audio.pcm`) placed next to the one under
+test, and aborts on the first repeated click: the test is killed, and the device
+under test gets a PTZ stop and `killall -9 majestic`, since a stop alone does not
+interrupt homing and a dead majestic sends the chip no more VD pulses.
+
+```sh
+tools/clickguard.py selftest --mic MIC        # it hears ticks played on MIC's speaker
+tools/clickguard.py run --mic MIC --dut DUT -- ssh root@DUT /tmp/afpass.sh
+```
+
+It needs Python 3 with numpy and scipy, and the cameras' web password in
+`CLICKGUARD_PASSWORD`. Before every run it listens to the quiet room and sets its
+bar above what the room does by itself; `run` exits 2 when it aborted.
 
 ## Contributing
 
